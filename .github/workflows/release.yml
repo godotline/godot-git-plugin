@@ -1,0 +1,203 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Mark the GitHub Release as a prerelease
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Validate release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read and validate release version
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version=$(sed -nE 's/^version="([^"]+)"$/\1/p' addons/godot-git-plugin/plugin.cfg)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error file=addons/godot-git-plugin/plugin.cfg::Invalid release version: $version"
+            exit 1
+          fi
+
+          tag="v$version"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $tag already exists. Bump plugin.cfg before publishing again."
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: preflight
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build.yml
+
+  package-and-release:
+    name: Package and publish
+    needs:
+      - preflight
+      - build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux build
+        uses: actions/download-artifact@v7
+        with:
+          name: libgit_plugin.linux.x86_64.editor.so-${{ github.sha }}
+          path: artifacts/linux
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v7
+        with:
+          name: libgit_plugin.windows.x86_64.editor.dll-${{ github.sha }}
+          path: artifacts/windows
+
+      - name: Download macOS build
+        uses: actions/download-artifact@v7
+        with:
+          name: libgit_plugin.macos.universal.editor.dylib-${{ github.sha }}
+          path: artifacts/macos
+
+      - name: Verify and package release assets
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          linux_root=artifacts/linux/addons/godot-git-plugin
+          windows_root=artifacts/windows/addons/godot-git-plugin
+          macos_root=artifacts/macos/addons/godot-git-plugin
+
+          test -f "$linux_root/linux/libgit_plugin.linux.editor.x86_64.so"
+          test -f "$windows_root/windows/libgit_plugin.windows.editor.x86_64.dll"
+          test -f "$macos_root/macos/libgit_plugin.macos.editor.universal.dylib"
+
+          mkdir -p staging dist/all
+          find "$linux_root" -type f ! -path "$linux_root/linux/*" -printf '%P\n' | sort > staging/linux-common.txt
+          find "$windows_root" -type f ! -path "$windows_root/windows/*" -printf '%P\n' | sort > staging/windows-common.txt
+          find "$macos_root" -type f ! -path "$macos_root/macos/*" -printf '%P\n' | sort > staging/macos-common.txt
+          diff -u staging/linux-common.txt staging/windows-common.txt
+          diff -u staging/linux-common.txt staging/macos-common.txt
+
+          while IFS= read -r relative_path; do
+            cmp "$linux_root/$relative_path" "$windows_root/$relative_path"
+            cmp "$linux_root/$relative_path" "$macos_root/$relative_path"
+          done < staging/linux-common.txt
+
+          cp -a artifacts/linux/addons dist/all/
+          cp -a "$windows_root/windows" dist/all/addons/godot-git-plugin/
+          cp -a "$macos_root/macos" dist/all/addons/godot-git-plugin/
+
+          (
+            cd dist/all
+            zip -X -qr "../godot-git-collaboration-v${VERSION}-all-platforms.zip" addons
+          )
+          (
+            cd artifacts/linux
+            zip -X -qr "$GITHUB_WORKSPACE/dist/godot-git-collaboration-v${VERSION}-linux-x86_64.zip" addons
+          )
+          (
+            cd artifacts/windows
+            zip -X -qr "$GITHUB_WORKSPACE/dist/godot-git-collaboration-v${VERSION}-windows-x86_64.zip" addons
+          )
+          (
+            cd artifacts/macos
+            zip -X -qr "$GITHUB_WORKSPACE/dist/godot-git-collaboration-v${VERSION}-macos-universal.zip" addons
+          )
+
+          for archive in dist/*.zip; do
+            unzip -tqq "$archive"
+            unexpected=$(unzip -Z1 "$archive" | awk '!/^addons\/$/ && !/^addons\/godot-git-plugin\//')
+            if [[ -n "$unexpected" ]]; then
+              echo "::error file=$archive::Archive contains files outside addons/godot-git-plugin/"
+              printf '%s\n' "$unexpected"
+              exit 1
+            fi
+
+            binary_count=$(unzip -Z1 "$archive" | awk '/\/libgit_plugin\./ { count++ } END { print count+0 }')
+            expected_count=1
+            if [[ "$archive" == *-all-platforms.zip ]]; then
+              expected_count=3
+            fi
+            if [[ "$binary_count" -ne "$expected_count" ]]; then
+              echo "::error file=$archive::Expected $expected_count native binaries, found $binary_count"
+              exit 1
+            fi
+          done
+
+          (
+            cd dist
+            sha256sum \
+              "godot-git-collaboration-v${VERSION}-all-platforms.zip" \
+              "godot-git-collaboration-v${VERSION}-linux-x86_64.zip" \
+              "godot-git-collaboration-v${VERSION}-macos-universal.zip" \
+              "godot-git-collaboration-v${VERSION}-windows-x86_64.zip" \
+              > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
+      - name: Preserve packaged assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-packages-${{ needs.preflight.outputs.tag }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          args=(
+            release create "$TAG"
+            --repo "$GITHUB_REPOSITORY"
+            --target "$GITHUB_SHA"
+            --title "Godot Git Collaboration $TAG"
+            --generate-notes
+            --notes "Requires Godot 4.7 or newer. Extract the selected package into the project root. Built by GitHub Actions from commit $GITHUB_SHA."
+            "dist/godot-git-collaboration-v${VERSION}-all-platforms.zip"
+            "dist/godot-git-collaboration-v${VERSION}-linux-x86_64.zip"
+            "dist/godot-git-collaboration-v${VERSION}-windows-x86_64.zip"
+            "dist/godot-git-collaboration-v${VERSION}-macos-universal.zip"
+            dist/SHA256SUMS
+          )
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+
+          gh "${args[@]}"
