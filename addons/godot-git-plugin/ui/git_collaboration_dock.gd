@@ -7,6 +7,7 @@ const SceneResolver = preload("res://addons/godot-git-plugin/scene/scene_conflic
 const SnapshotCache = preload("res://addons/godot-git-plugin/scene/scene_snapshot_cache.gd")
 const OverlayRenderer = preload("res://addons/godot-git-plugin/scene/scene_overlay_renderer.gd")
 const TreeColorAdapter = preload("res://addons/godot-git-plugin/scene/scene_tree_color_adapter.gd")
+const InspectorColorAdapter = preload("res://addons/godot-git-plugin/scene/scene_inspector_color_adapter.gd")
 
 const COLOR_ADDED := Color("#54c88a")
 const COLOR_MODIFIED := Color("#f4c95d")
@@ -19,6 +20,7 @@ const MODE_MERGE_REVIEW := 3
 
 var backend: RefCounted
 var editor_interface
+var backend_initialized := false
 var current_branch_text := ""
 var current_repository_state := "idle"
 var status_code := "initializing"
@@ -39,6 +41,7 @@ var scene_color_poll_elapsed := 0.0
 var snapshot_cache: RefCounted
 var overlay_renderer: RefCounted
 var tree_color_adapter: RefCounted
+var inspector_color_adapter: RefCounted
 var before_snapshot_root: Node
 var after_snapshot_root: Node
 
@@ -53,6 +56,7 @@ var target_ref_edit: LineEdit
 var status_summary_label: Label
 var file_tree: Tree
 var scene_diff_tree: Tree
+var property_diff_tree: Tree
 var conflict_tree: Tree
 var scene_color_toggle: CheckButton
 var refresh_button: Button
@@ -65,7 +69,10 @@ var merge_commit_button: Button
 var commit_message_edit: LineEdit
 var before_opacity_slider: HSlider
 var after_opacity_slider: HSlider
-var opacity_box: HBoxContainer
+var opacity_box: HFlowContainer
+var collaboration_tabs: TabContainer
+var property_info_label: Label
+var scene_split: HSplitContainer
 
 var file_detail: TextEdit
 var base_conflict_view: TextEdit
@@ -81,12 +88,35 @@ func _init() -> void:
 	snapshot_cache = SnapshotCache.new()
 	overlay_renderer = OverlayRenderer.new()
 	tree_color_adapter = TreeColorAdapter.new()
+	inspector_color_adapter = InspectorColorAdapter.new()
 
 func _ready() -> void:
 	_build_ui()
 	set_process(true)
+	call_deferred("_adapt_scene_split")
 	if tree_color_adapter != null:
 		tree_color_adapter.setup(editor_interface)
+	if inspector_color_adapter != null:
+		inspector_color_adapter.setup(editor_interface)
+
+func prepare_startup() -> void:
+	_build_ui()
+	_set_status("backend_idle", "Git backend idle. Press Refresh to connect.")
+	if current_branch_label != null:
+		current_branch_label.text = "Current: -"
+
+func _ensure_backend() -> bool:
+	if backend_initialized:
+		return true
+	if backend == null:
+		_set_status("backend_unavailable", "Git backend is not initialized")
+		return false
+	var result: Dictionary = backend.initialize(ProjectSettings.globalize_path("res://"))
+	if not bool(result.get("ok", false)):
+		_set_status(str(result.get("code", "backend_unavailable")), str(result.get("message", "Git backend is unavailable")))
+		return false
+	backend_initialized = true
+	return true
 
 func _process(delta: float) -> void:
 	if not scene_color_enabled or tree_color_adapter == null or current_scene_entries.is_empty():
@@ -101,6 +131,8 @@ func _process(delta: float) -> void:
 		_apply_scene_visualization(merge_review)
 		return
 	tree_color_adapter.poll(current_scene_entries, scene_diff_tree)
+	if inspector_color_adapter != null:
+		inspector_color_adapter.poll(current_scene_entries, edited_root)
 
 func _build_ui() -> void:
 	if current_branch_label != null:
@@ -117,9 +149,14 @@ func _build_ui() -> void:
 	header.add_child(title)
 	current_branch_label = Label.new()
 	current_branch_label.text = "Current: -"
+	current_branch_label.custom_minimum_size = Vector2(0, 0)
+	current_branch_label.clip_text = true
+	current_branch_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	current_branch_label.size_flags_horizontal = Control.SIZE_SHRINK_END
 	header.add_child(current_branch_label)
 
-	var compare_row := HBoxContainer.new()
+	var compare_row := HFlowContainer.new()
+	compare_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(compare_row)
 	var mode_label := Label.new()
 	mode_label.text = "Compare"
@@ -130,11 +167,12 @@ func _build_ui() -> void:
 	compare_mode.add_item("Working tree", MODE_WORKTREE)
 	compare_mode.add_item("Ref -> Ref", MODE_REF_REF)
 	compare_mode.add_item("Merge review", MODE_MERGE_REVIEW)
+	compare_mode.custom_minimum_size = Vector2(145, 0)
 	compare_mode.item_selected.connect(_mode_changed)
 	compare_row.add_child(compare_mode)
 	base_ref_edit = LineEdit.new()
 	base_ref_edit.placeholder_text = "Base ref / commit"
-	base_ref_edit.custom_minimum_size = Vector2(180, 0)
+	base_ref_edit.custom_minimum_size = Vector2(140, 0)
 	base_ref_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	compare_row.add_child(base_ref_edit)
 	var arrow := Label.new()
@@ -142,17 +180,19 @@ func _build_ui() -> void:
 	compare_row.add_child(arrow)
 	target_ref_edit = LineEdit.new()
 	target_ref_edit.placeholder_text = "Target ref / commit"
-	target_ref_edit.custom_minimum_size = Vector2(180, 0)
+	target_ref_edit.custom_minimum_size = Vector2(140, 0)
 	target_ref_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	target_ref_edit.text_changed.connect(_target_ref_changed)
 	compare_row.add_child(target_ref_edit)
 	target_ref = OptionButton.new()
 	target_ref.tooltip_text = "Pick a local branch, remote ref, or tag; a commit ID can be typed"
-	target_ref.custom_minimum_size = Vector2(180, 0)
+	target_ref.custom_minimum_size = Vector2(160, 0)
+	target_ref.fit_to_longest_item = false
 	target_ref.item_selected.connect(_ref_picked)
 	compare_row.add_child(target_ref)
 
-	var actions := HBoxContainer.new()
+	var actions := HFlowContainer.new()
+	actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(actions)
 	refresh_button = _make_button("Refresh", "Refresh repository state and visible Diff data", refresh)
 	actions.add_child(refresh_button)
@@ -173,20 +213,29 @@ func _build_ui() -> void:
 	scene_color_toggle.toggled.connect(_scene_color_changed)
 	actions.add_child(scene_color_toggle)
 
-	var summary_row := HBoxContainer.new()
+	var summary_row := HFlowContainer.new()
+	summary_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(summary_row)
 	status_label = Label.new()
 	status_label.text = "Initializing Git state..."
-	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	status_label.custom_minimum_size = Vector2(160, 0)
+	status_label.clip_text = true
+	status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	summary_row.add_child(status_label)
 	status_summary_label = Label.new()
 	status_summary_label.text = ""
+	status_summary_label.custom_minimum_size = Vector2(0, 0)
+	status_summary_label.clip_text = true
+	status_summary_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	summary_row.add_child(status_summary_label)
 
 	var tabs := TabContainer.new()
 	tabs.name = "CollaborationViews"
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	collaboration_tabs = tabs
 	add_child(tabs)
 
 	var files_page := VBoxContainer.new()
@@ -209,14 +258,47 @@ func _build_ui() -> void:
 	tabs.add_child(scene_page)
 	scene_info_label = Label.new()
 	scene_info_label.text = "Scene coloring is off. Enable it manually to scan the edited scene."
-	scene_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	scene_info_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	scene_info_label.custom_minimum_size = Vector2(180, 0)
+	scene_info_label.clip_text = true
+	scene_info_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	scene_info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scene_page.add_child(scene_info_label)
+	scene_split = HSplitContainer.new()
+	scene_split.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scene_split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scene_diff_tree = Tree.new()
 	scene_diff_tree.name = "SceneDiff"
 	scene_diff_tree.columns = 3
 	scene_diff_tree.hide_root = true
+	scene_diff_tree.custom_minimum_size = Vector2(0, 90)
+	scene_diff_tree.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scene_diff_tree.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scene_page.add_child(scene_diff_tree)
+	scene_diff_tree.item_selected.connect(_scene_entry_selected)
+	scene_split.add_child(scene_diff_tree)
+	var property_page := VBoxContainer.new()
+	property_page.name = "PropertyDiff"
+	property_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	property_info_label = Label.new()
+	property_info_label.text = "Select a changed scene node to inspect property changes."
+	property_info_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	property_info_label.custom_minimum_size = Vector2(0, 0)
+	property_info_label.clip_text = true
+	property_info_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	property_info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	property_page.add_child(property_info_label)
+	property_diff_tree = Tree.new()
+	property_diff_tree.name = "PropertyDiffTree"
+	property_diff_tree.columns = 4
+	property_diff_tree.hide_root = true
+	property_diff_tree.custom_minimum_size = Vector2(0, 90)
+	property_diff_tree.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	property_diff_tree.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	property_page.add_child(property_diff_tree)
+	scene_split.add_child(property_page)
+	scene_split.split_offset = 0
+	scene_split.resized.connect(_adapt_scene_split)
+	scene_page.add_child(scene_split)
 	opacity_box = _build_opacity_controls()
 	opacity_box.visible = false
 	scene_page.add_child(opacity_box)
@@ -234,7 +316,11 @@ func _build_ui() -> void:
 	conflicts_page.add_child(conflict_tree)
 	conflict_info_label = Label.new()
 	conflict_info_label.text = "Select a conflicted file to inspect Base, Ours, Theirs, and the editable result."
-	conflict_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	conflict_info_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	conflict_info_label.custom_minimum_size = Vector2(180, 0)
+	conflict_info_label.clip_text = true
+	conflict_info_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	conflict_info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	conflicts_page.add_child(conflict_info_label)
 	var conflict_views := TabContainer.new()
 	conflict_views.name = "ConflictStages"
@@ -253,7 +339,8 @@ func _build_ui() -> void:
 	result_conflict_view = _new_text_view(true)
 	result_conflict_view.name = "Result"
 	conflict_views.add_child(result_conflict_view)
-	var conflict_actions := HBoxContainer.new()
+	var conflict_actions := HFlowContainer.new()
+	conflict_actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	conflicts_page.add_child(conflict_actions)
 	take_base_button = _make_button("Take Base", "Replace the editable result with conflict stage 1", _take_base)
 	conflict_actions.add_child(take_base_button)
@@ -264,11 +351,13 @@ func _build_ui() -> void:
 	stage_conflict_button = _make_button("Stage result", "Write the edited result and remove this conflict from the index", _stage_conflict)
 	conflict_actions.add_child(stage_conflict_button)
 
-	var commit_row := HBoxContainer.new()
+	var commit_row := HFlowContainer.new()
+	commit_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(commit_row)
 	commit_message_edit = LineEdit.new()
 	commit_message_edit.placeholder_text = "Merge commit message"
 	commit_message_edit.text = "Merge target ref"
+	commit_message_edit.custom_minimum_size = Vector2(180, 0)
 	commit_message_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	commit_row.add_child(commit_message_edit)
 	merge_commit_button = _make_button("Create merge commit", "Create the pending merge commit explicitly", _create_merge_commit)
@@ -292,8 +381,9 @@ func _new_text_view(editable: bool) -> TextEdit:
 	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	return view
 
-func _build_opacity_controls() -> HBoxContainer:
-	var row := HBoxContainer.new()
+func _build_opacity_controls() -> HFlowContainer:
+	var row := HFlowContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var before_label := Label.new()
 	before_label.text = "Before"
 	row.add_child(before_label)
@@ -318,12 +408,23 @@ func _build_opacity_controls() -> HBoxContainer:
 	row.add_child(after_opacity_slider)
 	return row
 
+func _adapt_scene_split() -> void:
+	if scene_split == null or scene_split.size.x <= 0.0:
+		return
+	var minimum_pane_width := 140.0
+	var available_width := scene_split.size.x
+	var maximum_left_width := maxf(minimum_pane_width, available_width - minimum_pane_width)
+	var desired_left_width := clampf(available_width * 0.56, minimum_pane_width, maximum_left_width)
+	# HSplitContainer.split_offset is relative to the center line, not the left edge.
+	var desired_offset := int(desired_left_width - available_width * 0.5)
+	if scene_split.split_offset != desired_offset:
+		scene_split.split_offset = desired_offset
+
 func refresh() -> void:
 	_build_ui()
 	if tree_color_adapter != null:
 		tree_color_adapter.setup(editor_interface)
-	if backend == null:
-		_set_status("backend_unavailable", "Git backend is not initialized")
+	if not _ensure_backend():
 		return
 	var result: Dictionary = backend.repository_state()
 	if not bool(result.get("ok", false)):
@@ -446,6 +547,8 @@ func _comparison_refs() -> Dictionary:
 	return {"base": _selected_base(), "target": _selected_target(), "mode": mode}
 
 func _merge() -> void:
+	if not _ensure_backend():
+		return
 	if not merge_enabled:
 		_set_status("dirty_worktree", "Merge is blocked until the worktree is clean and a target ref is selected")
 		return
@@ -474,7 +577,7 @@ func _merge() -> void:
 	refresh()
 
 func _create_merge_commit() -> void:
-	if current_repository_state != "merge" or backend == null:
+	if not _ensure_backend() or current_repository_state != "merge":
 		_set_status("merge_commit_unavailable", "There is no pending merge commit")
 		return
 	var message := commit_message_edit.text.strip_edges()
@@ -490,6 +593,8 @@ func _create_merge_commit() -> void:
 	refresh()
 
 func _show_diff() -> void:
+	if not _ensure_backend():
+		return
 	var refs := _comparison_refs()
 	var base := str(refs.get("base", ""))
 	var target := str(refs.get("target", ""))
@@ -536,6 +641,8 @@ func _clear_review() -> void:
 	_set_status("review_cleared", "Temporary before/after review layers cleared")
 
 func _fetch() -> void:
+	if not _ensure_backend():
+		return
 	_set_busy(true)
 	var result: Dictionary = backend.fetch()
 	_set_busy(false)
@@ -561,7 +668,8 @@ func _populate_files(files: Array) -> void:
 	if files.is_empty():
 		file_detail.text = "No changed files in the selected comparison."
 
-func _file_selected(item: TreeItem, _column: int) -> void:
+func _file_selected() -> void:
+	var item: TreeItem = file_tree.get_selected() if file_tree != null else null
 	if item == null:
 		return
 	var file = item.get_metadata(0)
@@ -598,7 +706,8 @@ func _populate_conflicts(conflicts: Array) -> void:
 		_clear_conflict_views()
 		conflict_info_label.text = "No index conflicts. A clean merge can be committed explicitly below."
 
-func _conflict_selected(item: TreeItem, _column: int) -> void:
+func _conflict_selected() -> void:
+	var item: TreeItem = conflict_tree.get_selected() if conflict_tree != null else null
 	if item == null:
 		return
 	var conflict = item.get_metadata(0)
@@ -796,6 +905,10 @@ func _apply_scene_visualization(review: bool) -> void:
 	current_scene_entries = Array(result.get("entries", []))
 	_populate_scene_entries(current_scene_entries)
 	tree_color_adapter.apply(current_scene_entries, scene_diff_tree)
+	if inspector_color_adapter != null:
+		inspector_color_adapter.poll(current_scene_entries, edited_root)
+	if collaboration_tabs != null:
+		collaboration_tabs.current_tab = 1
 	_cleanup_snapshot_roots()
 	var snapshot_id := current_base_ref + "__" + current_target_ref
 	var before_result: Dictionary = snapshot_cache.load_scene(snapshot_id, scene_path, before, "before")
@@ -811,6 +924,10 @@ func _apply_scene_visualization(review: bool) -> void:
 
 func _populate_scene_entries(entries: Array) -> void:
 	scene_diff_tree.clear()
+	if property_diff_tree != null:
+		property_diff_tree.clear()
+	if property_info_label != null:
+		property_info_label.text = "Select a changed scene node to inspect property changes."
 	var root := scene_diff_tree.create_item()
 	for entry in entries:
 		if not entry is Dictionary:
@@ -820,8 +937,86 @@ func _populate_scene_entries(entries: Array) -> void:
 		item.set_text(0, str(entry.get("path", "")))
 		item.set_text(1, status)
 		item.set_text(2, ", ".join(Array(entry.get("changed_properties", []))))
+		item.set_custom_color(0, _with_alpha(_status_color(status), 0.92))
 		item.set_custom_color(1, _status_color(status))
+		item.set_tooltip_text(0, "%s %s" % [status, str(entry.get("path", ""))])
 		item.set_metadata(0, entry)
+		if scene_diff_tree.get_root().get_first_child() == item:
+			item.select(0)
+	if scene_diff_tree.get_root().get_first_child() != null:
+		_scene_entry_selected()
+
+func _scene_entry_selected() -> void:
+	if scene_diff_tree == null or property_diff_tree == null:
+		return
+	var item: TreeItem = scene_diff_tree.get_selected()
+	if item == null:
+		return
+	var entry = item.get_metadata(0)
+	if not entry is Dictionary:
+		return
+	_select_current_scene_node(entry)
+	var changes: Array = Array(entry.get("property_changes", []))
+	property_diff_tree.clear()
+	var root := property_diff_tree.create_item()
+	var status := str(entry.get("status", "MODIFIED"))
+	property_info_label.text = "%s: %s (%s)" % [status, str(entry.get("path", "")), str(entry.get("type", ""))]
+	for change in changes:
+		if not change is Dictionary:
+			continue
+		var property_item := property_diff_tree.create_item(root)
+		var property_status := str(change.get("status", "MODIFIED"))
+		property_item.set_text(0, str(change.get("name", "")))
+		property_item.set_text(1, property_status)
+		property_item.set_text(2, _short_property_value(change.get("before", "")))
+		property_item.set_text(3, _short_property_value(change.get("after", "")))
+		var property_color := _status_color(property_status)
+		property_item.set_custom_color(0, _with_alpha(property_color, 0.92))
+		property_item.set_custom_color(1, property_color)
+		property_item.set_custom_color(2, _with_alpha(property_color, 0.78))
+		property_item.set_custom_color(3, _with_alpha(property_color, 0.92))
+		property_item.set_tooltip_text(0, "%s %s" % [property_status, str(change.get("name", ""))])
+		property_item.set_tooltip_text(2, str(change.get("before", "")))
+		property_item.set_tooltip_text(3, str(change.get("after", "")))
+	if changes.is_empty():
+		property_info_label.text += " | no serialized property changes"
+	if inspector_color_adapter != null:
+		inspector_color_adapter.poll(current_scene_entries, _edited_scene_root())
+
+func _select_current_scene_node(entry: Dictionary) -> void:
+	if editor_interface == null or not editor_interface.has_method("get_selection"):
+		return
+	var edited_root := _edited_scene_root()
+	if edited_root == null:
+		return
+	var path := NodePath(str(entry.get("path", "")))
+	var node := _resolve_scene_node(edited_root, path)
+	if node == null:
+		return
+	var selection = editor_interface.call("get_selection")
+	if selection == null:
+		return
+	selection.clear()
+	selection.add_node(node)
+
+func _resolve_scene_node(root: Node, path: NodePath) -> Node:
+	if root == null:
+		return null
+	var value := str(path)
+	if value.is_empty() or value == "." or value == str(root.name):
+		return root
+	if value.begins_with(str(root.name) + "/"):
+		value = value.substr(str(root.name).length() + 1)
+	if root.has_node(NodePath(value)):
+		return root.get_node(NodePath(value))
+	return null
+
+func _with_alpha(color: Color, alpha: float) -> Color:
+	return Color(color.r, color.g, color.b, alpha)
+
+func _short_property_value(value: Variant) -> String:
+	var text := str(value)
+	return text if text.length() <= 96 else text.substr(0, 93) + "..."
 
 func _clear_scene_visualization() -> void:
 	current_scene_entries.clear()
@@ -831,6 +1026,12 @@ func _clear_scene_visualization() -> void:
 		tree_color_adapter.clear()
 	if scene_diff_tree != null:
 		scene_diff_tree.clear()
+	if property_diff_tree != null:
+		property_diff_tree.clear()
+	if property_info_label != null:
+		property_info_label.text = "Select a changed scene node to inspect property changes."
+	if inspector_color_adapter != null:
+		inspector_color_adapter.clear()
 	if overlay_renderer != null:
 		overlay_renderer.set_enabled(false)
 		overlay_renderer.detach()
@@ -887,7 +1088,7 @@ func _instantiate_snapshot(result: Dictionary) -> Node:
 	var packed = result.get("scene")
 	if packed == null or not packed is PackedScene:
 		return null
-	var root: Node = packed.instantiate()
+	var root: Node = packed.instantiate(PackedScene.GEN_EDIT_STATE_DISABLED)
 	if root == null:
 		return null
 	_disable_snapshot_behavior(root)
@@ -955,8 +1156,11 @@ func _set_status(code: String, message: String) -> void:
 
 func cleanup() -> void:
 	scene_color_enabled = false
+	backend_initialized = false
 	if tree_color_adapter != null:
 		tree_color_adapter.clear()
+	if inspector_color_adapter != null:
+		inspector_color_adapter.clear()
 	if overlay_renderer != null:
 		overlay_renderer.detach()
 	_cleanup_snapshot_roots()

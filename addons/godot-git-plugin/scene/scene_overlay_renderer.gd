@@ -4,7 +4,7 @@ extends RefCounted
 
 const COLOR_ADDED := Color(0.33, 0.78, 0.55, 0.28)
 const COLOR_MODIFIED := Color(0.96, 0.79, 0.30, 0.28)
-const COLOR_DELETED := Color(0.93, 0.42, 0.35, 0.30)
+const COLOR_DELETED := Color(0.93, 0.42, 0.35, 0.45)
 
 var enabled := false
 var before_opacity := 0.5
@@ -29,6 +29,9 @@ func attach_to(scene_root: Node) -> void:
 		overlay_root = _new_overlay_root(scene_root)
 		overlay_root.name = "__GitDiffOverlay"
 		overlay_root.owner = null
+		overlay_root.process_mode = Node.PROCESS_MODE_DISABLED
+		overlay_root.set_meta("_edit_lock_", true)
+		overlay_root.set_meta("_git_diff_overlay", true)
 		attached_scene_root = scene_root
 	if overlay_root.get_parent() != scene_root:
 		if overlay_root.get_parent() != null:
@@ -92,6 +95,8 @@ func _add_duplicate(source: Node, color: Color) -> void:
 	if duplicate == null:
 		return
 	_strip_behavior(duplicate)
+	duplicate.set_meta("_edit_lock_", true)
+	duplicate.set_meta("_git_diff_overlay", true)
 	overlay_root.add_child(duplicate)
 	duplicate.owner = null
 	if duplicate is Node3D and source is Node3D:
@@ -104,6 +109,8 @@ func _add_duplicate(source: Node, color: Color) -> void:
 			duplicate.global_transform = source.global_transform
 		else:
 			duplicate.transform = _relative_transform_2d(source)
+	if source is CollisionShape3D and duplicate is CollisionShape3D:
+		_add_collision_visual(duplicate, source)
 	_apply_color(duplicate, color)
 	if duplicate is CanvasItem:
 		duplicate.show_behind_parent = false
@@ -131,6 +138,9 @@ func _relative_transform_2d(source: Node2D) -> Transform2D:
 	return result
 
 func _strip_behavior(node: Node) -> void:
+	node.process_mode = Node.PROCESS_MODE_DISABLED
+	node.set_meta("_edit_lock_", true)
+	node.set_meta("_git_diff_overlay", true)
 	if node.get_script() != null:
 		node.set_script(null)
 	if node.has_method("set_process"):
@@ -143,12 +153,35 @@ func _strip_behavior(node: Node) -> void:
 	for child in node.get_children():
 		_strip_behavior(child)
 
+func _add_collision_visual(duplicate: CollisionShape3D, source: CollisionShape3D) -> void:
+	var shape := source.shape
+	if shape == null:
+		return
+	var mesh: Mesh = null
+	if shape.has_method("get_debug_mesh"):
+		var debug_mesh = shape.call("get_debug_mesh")
+		if debug_mesh is Mesh:
+			mesh = debug_mesh
+	if mesh == null:
+		return
+	var visual := MeshInstance3D.new()
+	visual.name = "__GitDiffCollisionShape"
+	visual.mesh = mesh
+	visual.owner = null
+	visual.process_mode = Node.PROCESS_MODE_DISABLED
+	visual.set_meta("_edit_lock_", true)
+	visual.set_meta("_git_diff_overlay", true)
+	duplicate.add_child(visual)
+
 func _apply_color(node: Node, color: Color) -> void:
 	if node is GeometryInstance3D:
 		var material := StandardMaterial3D.new()
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		material.albedo_color = color
+		material.albedo_color = _with_alpha(color, maxf(color.a, 0.42))
 		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.no_depth_test = true
+		material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		material.render_priority = 1
 		node.material_overlay = material
 	elif node is CanvasItem:
 		node.modulate = color

@@ -39,18 +39,18 @@ static func compare_text(base_text: String, target_text: String) -> Dictionary:
 		else:
 			var before: Dictionary = base_nodes[path]
 			var after: Dictionary = target_nodes[path]
-			var changed_properties: Array[String] = _changed_properties(before.get("properties", {}), after.get("properties", {}))
+			var property_changes: Array = _property_changes(before.get("properties", {}), after.get("properties", {}))
 			var type_changed := str(before.type) != str(after.type)
 			var parent_changed := str(before.parent) != str(after.parent)
 			if type_changed:
 				entry = _entry(path, TYPE_CHANGED, before, after)
 			elif parent_changed:
 				entry = _entry(path, MOVED, before, after)
-			elif not changed_properties.is_empty():
+			elif not property_changes.is_empty():
 				entry = _entry(path, MODIFIED, before, after)
 			else:
 				continue
-			entry.changed_properties = changed_properties
+			entry.changed_properties = _property_names(property_changes)
 		entries.append(entry)
 
 	_infer_renames(entries)
@@ -98,26 +98,49 @@ static func _header_attribute(line: String, attribute: String) -> String:
 	var match := expression.search(line)
 	return "" if match == null else match.get_string(1)
 
-static func _changed_properties(before: Dictionary, after: Dictionary) -> Array[String]:
-	var changed: Array[String] = []
+static func _property_changes(before: Dictionary, after: Dictionary) -> Array:
+	var changes: Array = []
 	var names: Dictionary = {}
 	for name in before.keys():
 		names[name] = true
 	for name in after.keys():
 		names[name] = true
 	for name in names.keys():
-		if str(before.get(name, "")) != str(after.get(name, "")):
-			changed.append(str(name))
-	changed.sort()
-	return changed
+		var has_before := before.has(name)
+		var has_after := after.has(name)
+		if has_before and has_after and str(before.get(name, "")) == str(after.get(name, "")):
+			continue
+		var status := MODIFIED
+		if not has_before:
+			status = ADDED
+		elif not has_after:
+			status = DELETED
+		changes.append({
+			"name": str(name),
+			"status": status,
+			"before": str(before.get(name, "")),
+			"after": str(after.get(name, ""))
+		})
+	changes.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return str(a.get("name", "")) < str(b.get("name", "")))
+	return changes
+
+static func _property_names(changes: Array) -> Array[String]:
+	var names: Array[String] = []
+	for change in changes:
+		if change is Dictionary:
+			names.append(str(change.get("name", "")))
+	return names
 
 static func _entry(path: String, status: String, before: Dictionary, after: Dictionary) -> Dictionary:
+	var property_changes: Array = _property_changes(before.get("properties", {}), after.get("properties", {}))
 	return {
 		"path": path,
 		"status": status,
 		"type": str(after.get("type", before.get("type", ""))),
 		"parent": str(after.get("parent", before.get("parent", ""))),
-		"changed_properties": [],
+		"changed_properties": _property_names(property_changes),
+		"property_changes": property_changes,
 		"before": before.duplicate(true),
 		"after": after.duplicate(true)
 	}

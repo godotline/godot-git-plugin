@@ -5,28 +5,41 @@ const BackendAdapter = preload("res://addons/godot-git-plugin/backend/git_backen
 const CollaborationDock = preload("res://addons/godot-git-plugin/ui/git_collaboration_dock.gd")
 
 var backend: RefCounted
+var panel: MarginContainer
 var dock
 var bottom_split_state: Dictionary = {}
 
 func _enter_tree() -> void:
 	backend = BackendAdapter.new()
-	backend.initialize(ProjectSettings.globalize_path("res://"))
 
 	dock = CollaborationDock.new()
 	dock.name = "GitCollaborationDock"
 	dock.backend = backend
 	dock.editor_interface = get_editor_interface()
-	add_control_to_bottom_panel(dock, "Git Collaboration")
+	dock.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dock.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	dock.custom_minimum_size = Vector2(0, 220)
+	dock.clip_contents = true
+	panel = MarginContainer.new()
+	panel.name = "GitCollaborationPanel"
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.add_child(dock)
+	add_control_to_bottom_panel(panel, "Git Collaboration")
 	call_deferred("_configure_bottom_panel_resize")
-	dock.refresh()
+	dock.call_deferred("prepare_startup")
 
 func _exit_tree() -> void:
 	_restore_bottom_panel_resize()
 	if dock != null:
 		dock.cleanup()
-		remove_control_from_bottom_panel(dock)
-		dock.queue_free()
+		if panel != null:
+			remove_control_from_bottom_panel(panel)
+			panel.queue_free()
+		else:
+			dock.queue_free()
 		dock = null
+		panel = null
 	backend = null
 
 func _configure_bottom_panel_resize() -> void:
