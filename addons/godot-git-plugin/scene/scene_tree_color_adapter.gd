@@ -37,13 +37,31 @@ func apply(entries: Array, fallback_tree: Tree) -> bool:
 	return true
 
 func _find_scene_tree() -> Tree:
-	if editor_interface == null or not editor_interface.has_method("get_scene_tree_dock"):
+	if editor_interface == null:
 		return null
-	var dock = editor_interface.call("get_scene_tree_dock")
+	var dock: Node = null
+	if editor_interface.has_method("get_scene_tree_dock"):
+		dock = editor_interface.call("get_scene_tree_dock")
+	if dock == null and editor_interface.has_method("get_base_control"):
+		var base_control: Node = editor_interface.call("get_base_control")
+		if base_control != null:
+			var scene_docks: Array[Node] = base_control.find_children("*", "SceneTreeDock", true, false)
+			if not scene_docks.is_empty():
+				dock = scene_docks[0]
+			else:
+				var scene_editors: Array[Node] = base_control.find_children("*", "SceneTreeEditor", true, false)
+				for scene_editor in scene_editors:
+					var editor_trees: Array[Node] = scene_editor.find_children("*", "Tree", true, false)
+					for candidate in editor_trees:
+						if candidate is Tree and candidate.get_root() != null:
+							return candidate
 	if dock == null:
 		return null
 	var trees: Array[Node] = dock.find_children("*", "Tree", true, false)
-	return trees[0] if not trees.is_empty() else null
+	for candidate in trees:
+		if candidate is Tree and candidate.get_root() != null:
+			return candidate
+	return null
 
 func _color_tree_items(item: TreeItem, parent_path: String, by_path: Dictionary) -> void:
 	if item == null:
