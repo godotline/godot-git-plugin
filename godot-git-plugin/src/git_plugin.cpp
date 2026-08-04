@@ -103,7 +103,8 @@ void GitPlugin::_discard_file(const godot::String &file_path) {
 	GIT2_CALL(git_checkout_index(repo.get(), nullptr, &opts), "Could not checkout index");
 }
 
-void GitPlugin::_commit(const godot::String &msg) {
+void GitPlugin::_commit(const godot::String &msg, bool amend) {
+	(void)amend;
 	git_index_ptr repo_index;
 	GIT2_CALL(git_repository_index(Capture(repo_index), repo.get()), "Could not get repository index");
 

@@ -350,12 +350,12 @@ Dictionary GitPlugin::collaboration_get_blob(const String &ref_name, const Strin
 		return collaboration_result(false, "missing_ref", error_message);
 	}
 	CString c_path(path);
-	const git_tree_entry *entry = git_tree_entry_bypath(tree.get(), c_path.data);
-	if (!entry || git_tree_entry_type(entry) != GIT_OBJECT_BLOB) {
+	git_tree_entry_ptr entry;
+	if (git_tree_entry_bypath(Capture(entry), tree.get(), c_path.data) != 0 || !entry || git_tree_entry_type(entry.get()) != GIT_OBJECT_BLOB) {
 		return collaboration_result(false, "missing_blob", "The ref does not contain a file at " + path);
 	}
 	git_blob_ptr blob;
-	if (git_blob_lookup(Capture(blob), repo.get(), git_tree_entry_id(entry)) != 0) {
+	if (git_blob_lookup(Capture(blob), repo.get(), git_tree_entry_id(entry.get())) != 0) {
 		return collaboration_result(false, "blob_failed", "Could not load " + path);
 	}
 	Dictionary data;
@@ -586,7 +586,7 @@ Dictionary GitPlugin::collaboration_commit(const String &message) {
 	if (!get_status_counts(this, staged, unstaged, conflicts) || unstaged != 0 || conflicts != 0) {
 		return collaboration_result(false, "dirty_worktree", "Resolve conflicts and stage all merge changes before committing");
 	}
-	_commit(message);
+	_commit(message, false);
 	if (has_merge || git_repository_state(repo.get()) != GIT_REPOSITORY_STATE_NONE) {
 		return collaboration_result(false, "commit_failed", "Could not create the merge commit");
 	}
