@@ -33,7 +33,19 @@
 #define COMMA ,
 
 void GitPlugin::_bind_methods() {
-	// Doesn't seem to require binding functions for now
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_initialize", "project_path"), &GitPlugin::collaboration_initialize);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_get_repository_state"), &GitPlugin::collaboration_get_repository_state);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_get_refs"), &GitPlugin::collaboration_get_refs);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_diff_refs", "base_ref", "target_ref", "path_filter"), &GitPlugin::collaboration_diff_refs);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_get_blob", "ref_name", "path"), &GitPlugin::collaboration_get_blob);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_analyze_merge", "target_ref"), &GitPlugin::collaboration_analyze_merge);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_merge_ref", "target_ref"), &GitPlugin::collaboration_merge_ref);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_get_conflicts"), &GitPlugin::collaboration_get_conflicts);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_get_conflict_blob", "path", "stage"), &GitPlugin::collaboration_get_conflict_blob);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_write_and_stage", "path", "content"), &GitPlugin::collaboration_write_and_stage);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_get_worktree_files"), &GitPlugin::collaboration_get_worktree_files);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_commit", "message"), &GitPlugin::collaboration_commit);
+	godot::ClassDB::bind_method(godot::D_METHOD("collaboration_fetch", "remote"), &GitPlugin::collaboration_fetch);
 }
 
 GitPlugin::GitPlugin() {
@@ -634,6 +646,27 @@ godot::TypedArray<godot::Dictionary> GitPlugin::_parse_diff(git_diff *diff) {
 		GIT2_CALL_R(git_patch_from_diff(Capture(patch), diff, i), "Could not create patch from diff", godot::TypedArray<godot::Dictionary>());
 
 		godot::Dictionary diff_file = create_diff_file(godot::String::utf8(delta->new_file.path), godot::String::utf8(delta->old_file.path));
+		godot::String diff_status = "MODIFIED";
+		switch (delta->status) {
+			case GIT_DELTA_ADDED:
+				diff_status = "ADDED";
+				break;
+			case GIT_DELTA_DELETED:
+				diff_status = "DELETED";
+				break;
+			case GIT_DELTA_RENAMED:
+				diff_status = "RENAMED";
+				break;
+			case GIT_DELTA_COPIED:
+				diff_status = "COPIED";
+				break;
+			case GIT_DELTA_TYPECHANGE:
+				diff_status = "TYPE_CHANGED";
+				break;
+			default:
+				break;
+		}
+		diff_file["status"] = diff_status;
 
 		godot::TypedArray<godot::Dictionary> diff_hunks;
 		for (int j = 0; j < git_patch_num_hunks(patch.get()); j++) {

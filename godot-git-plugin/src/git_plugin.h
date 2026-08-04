@@ -34,6 +34,22 @@ public:
 
 	GitPlugin();
 
+	// Collaboration API used by the Godot editor addon.
+	godot::Dictionary collaboration_initialize(const godot::String &project_path);
+	godot::Dictionary collaboration_get_repository_state();
+	godot::TypedArray<godot::Dictionary> collaboration_get_refs();
+	godot::Dictionary collaboration_diff_refs(const godot::String &base_ref, const godot::String &target_ref, const godot::String &path_filter);
+	godot::Dictionary collaboration_get_blob(const godot::String &ref_name, const godot::String &path);
+	godot::Dictionary collaboration_analyze_merge(const godot::String &target_ref);
+	godot::Dictionary collaboration_merge_ref(const godot::String &target_ref);
+	godot::TypedArray<godot::Dictionary> collaboration_get_conflicts();
+	godot::Dictionary collaboration_get_conflict_blob(const godot::String &path, int32_t stage);
+	godot::Dictionary collaboration_write_and_stage(const godot::String &path, const godot::String &content);
+	godot::TypedArray<godot::Dictionary> collaboration_get_worktree_files();
+	godot::Dictionary collaboration_commit(const godot::String &message);
+	godot::Dictionary collaboration_fetch(const godot::String &remote);
+	godot::Dictionary collaboration_result(bool ok, const godot::String &code, const godot::String &message, const godot::Variant &data = godot::Variant()) const;
+
 	// Endpoints
 	bool _initialize(const godot::String &project_path) override;
 	void _set_credentials(const godot::String &username, const godot::String &password, const godot::String &ssh_public_key_path, const godot::String &ssh_private_key_path, const godot::String &ssh_passphrase) override;

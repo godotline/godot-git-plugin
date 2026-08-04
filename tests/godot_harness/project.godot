@@ -1,0 +1,17 @@
+[application]
+
+config/name="Godot Git Plugin Test Harness"
+
+[display]
+
+window/size/viewport_width=960
+window/size/viewport_height=540
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+
+[editor]
+
+run/main_run_args=""
