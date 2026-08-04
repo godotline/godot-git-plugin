@@ -46,8 +46,14 @@ jobs:
       - name: Build for Linux editor x86_64
         run: |
           pip3 install scons
-          scons platform=linux arch=x86_64
-          ldd addons/godot-git-plugin/linux/*.so
+          scons platform=linux arch=x86_64 use_static_cpp=no
+          plugin=addons/godot-git-plugin/linux/libgit_plugin.linux.editor.x86_64.so
+          ldd "$plugin"
+          readelf -d "$plugin" | grep -q 'Shared library: \[libstdc++.so.6\]'
+          if nm -D --defined-only "$plugin" | c++filt | grep -q 'std::'; then
+            echo "Linux plugin must not export C++ runtime symbols"
+            exit 1
+          fi
       - name: Save Godot build cache
         uses: ./godot-cpp/.github/actions/godot-cache-save
         with:

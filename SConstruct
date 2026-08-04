@@ -22,8 +22,17 @@ if ARGUMENTS.get("custom_api_file", "") != "":
     ARGUMENTS["custom_api_file"] = "../" + ARGUMENTS["custom_api_file"]
 
 ARGUMENTS["target"] = "editor"
+if ARGUMENTS.get("platform", "") == "linux":
+    # A private static libstdc++ exports process-wide locale symbols that can
+    # corrupt C++ Vulkan layers loaded later, such as LSFG.
+    ARGUMENTS.setdefault("use_static_cpp", "no")
 env = SConscript("godot-cpp/SConstruct").Clone()
 env.__class__.msvc = env.get("is_msvc", False)
+
+# Keep symbols from godot-cpp and bundled third-party archives private. The
+# GDExtension entry point remains exported through GDE_EXPORT.
+if env["platform"] == "linux":
+    env.AppendUnique(LINKFLAGS=["-Wl,--exclude-libs,ALL"])
 
 # Force linking with LTO on windows MSVC, silence the linker complaining that libgit uses LTO but we are not linking with it.
 if env["platform"] == "windows" and env.get("is_msvc", False):
