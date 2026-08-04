@@ -1,6 +1,9 @@
 name: C/C++ CI
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 env:
   # Only used for the cache key. Increment version to force clean build.
