@@ -34,6 +34,7 @@ var selected_file_path := ""
 var selected_conflict_path := ""
 var merge_review := false
 var scene_color_enabled := false
+var scene_color_poll_elapsed := 0.0
 
 var snapshot_cache: RefCounted
 var overlay_renderer: RefCounted
@@ -83,14 +84,29 @@ func _init() -> void:
 
 func _ready() -> void:
 	_build_ui()
+	set_process(true)
 	if tree_color_adapter != null:
 		tree_color_adapter.setup(editor_interface)
+
+func _process(delta: float) -> void:
+	if not scene_color_enabled or tree_color_adapter == null or current_scene_entries.is_empty():
+		return
+	scene_color_poll_elapsed += delta
+	if scene_color_poll_elapsed < 0.15:
+		return
+	scene_color_poll_elapsed = 0.0
+	var edited_root := _edited_scene_root()
+	var scene_path := _edited_scene_relative_path(edited_root)
+	if not scene_path.is_empty() and scene_path != current_scene_path:
+		_apply_scene_visualization(merge_review)
+		return
+	tree_color_adapter.poll(current_scene_entries, scene_diff_tree)
 
 func _build_ui() -> void:
 	if current_branch_label != null:
 		return
 
-	custom_minimum_size = Vector2(0, 330)
+	custom_minimum_size = Vector2(0, 220)
 	add_theme_constant_override("separation", 6)
 
 	var header := HBoxContainer.new()
@@ -733,6 +749,7 @@ func _status_color(status: String) -> Color:
 
 func _scene_color_changed(enabled: bool) -> void:
 	scene_color_enabled = enabled
+	scene_color_poll_elapsed = 0.0
 	if overlay_renderer != null:
 		overlay_renderer.set_enabled(enabled)
 	if not enabled:
@@ -808,6 +825,8 @@ func _populate_scene_entries(entries: Array) -> void:
 
 func _clear_scene_visualization() -> void:
 	current_scene_entries.clear()
+	current_scene_path = ""
+	scene_color_poll_elapsed = 0.0
 	if tree_color_adapter != null:
 		tree_color_adapter.clear()
 	if scene_diff_tree != null:
