@@ -8,6 +8,7 @@ const COLOR_DELETED := Color("#ed6a5a")
 
 var editor_interface
 var original_colors: Dictionary = {}
+var scene_tree_root_name := ""
 
 func setup(interface_value) -> void:
 	editor_interface = interface_value
@@ -21,6 +22,7 @@ func clear() -> void:
 			elif item.has_method("clear_custom_color"):
 				item.clear_custom_color(0)
 	original_colors.clear()
+	scene_tree_root_name = ""
 
 func apply(entries: Array, fallback_tree: Tree) -> bool:
 	clear()
@@ -33,7 +35,9 @@ func apply(entries: Array, fallback_tree: Tree) -> bool:
 	var by_path: Dictionary = {}
 	for entry in entries:
 		by_path[str(entry.get("path", ""))] = entry
-	_color_tree_items(tree.get_root(), "", by_path)
+	var root := tree.get_root()
+	scene_tree_root_name = root.get_text(0) if root != null else ""
+	_color_tree_items(root, "", by_path)
 	return true
 
 func _find_scene_tree() -> Tree:
@@ -68,13 +72,19 @@ func _color_tree_items(item: TreeItem, parent_path: String, by_path: Dictionary)
 		return
 	var item_name := item.get_text(0)
 	var path := _join_path(parent_path, item_name)
-	if by_path.has(path):
+	var lookup_path := path
+	var root_prefix := scene_tree_root_name + "/"
+	if not scene_tree_root_name.is_empty() and path.begins_with(root_prefix):
+		var rootless_path := path.substr(root_prefix.length())
+		if by_path.has(rootless_path):
+			lookup_path = rootless_path
+	if by_path.has(lookup_path):
 		original_colors[item] = {
 			"color": item.get_custom_color(0),
 			"custom": item.has_method("is_custom_set_as_color") and item.is_custom_set_as_color(0)
 		}
-		item.set_custom_color(0, _status_color(str(by_path[path].get("status", "MODIFIED"))))
-		item.set_tooltip_text(0, str(by_path[path].get("status", "MODIFIED")) + " " + path)
+		item.set_custom_color(0, _status_color(str(by_path[lookup_path].get("status", "MODIFIED"))))
+		item.set_tooltip_text(0, str(by_path[lookup_path].get("status", "MODIFIED")) + " " + lookup_path)
 	var child := item.get_first_child()
 	while child != null:
 		_color_tree_items(child, path, by_path)
