@@ -71,7 +71,7 @@ def ssl_platform_options(env):
         "no-tests",
     ]
     if env["platform"] == "windows":
-        ssl_config_options.append("enable-capieng")
+        ssl_config_options.extend(["enable-capieng", "no-apps"])
     return ssl_config_options
 
 

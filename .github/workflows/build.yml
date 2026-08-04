@@ -88,9 +88,14 @@ jobs:
       - name: Build for Windows editor x86_64
         shell: powershell
         run: |
+          $ErrorActionPreference = "Stop"
           pip3 install scons
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           scons platform=windows arch=x86_64
-          dumpbin /dependents .\addons\godot-git-plugin\windows\*.dll
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $plugin = Get-Item .\addons\godot-git-plugin\windows\libgit_plugin.windows.editor.x86_64.dll
+          dumpbin /dependents $plugin.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Save Godot build cache
         uses: ./godot-cpp/.github/actions/godot-cache-save
         with:
@@ -104,6 +109,7 @@ jobs:
           rm -f addons/godot-git-plugin/windows/*.{exp,lib}
           mkdir out
           mv addons out/
+          test -f out/addons/godot-git-plugin/windows/libgit_plugin.windows.editor.x86_64.dll
       - uses: actions/upload-artifact@v7
         with:
           name: libgit_plugin.windows.x86_64.editor.dll-${{ github.sha }}
