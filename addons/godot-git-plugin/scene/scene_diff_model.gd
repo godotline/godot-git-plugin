@@ -10,8 +10,8 @@ const TYPE_CHANGED := "TYPE_CHANGED"
 const CONFLICT := "CONFLICT"
 
 static func compare_text(base_text: String, target_text: String) -> Dictionary:
-	var base := parse_text(base_text, true)
-	var target := parse_text(target_text, true)
+	var base: Dictionary = parse_text(base_text, true)
+	var target: Dictionary = parse_text(target_text, true)
 	if not bool(base.get("supported", false)) or not bool(target.get("supported", false)):
 		return {
 			"supported": false,
@@ -21,23 +21,25 @@ static func compare_text(base_text: String, target_text: String) -> Dictionary:
 
 	var entries: Array = []
 	var paths: Dictionary = {}
-	for path in base.nodes.keys():
+	var base_nodes: Dictionary = base.get("nodes", {})
+	var target_nodes: Dictionary = target.get("nodes", {})
+	for path in base_nodes.keys():
 		paths[path] = true
-	for path in target.nodes.keys():
+	for path in target_nodes.keys():
 		paths[path] = true
 
 	for path in paths.keys():
-		var has_base := base.nodes.has(path)
-		var has_target := target.nodes.has(path)
+		var has_base: bool = base_nodes.has(path)
+		var has_target: bool = target_nodes.has(path)
 		var entry: Dictionary
 		if not has_base:
-			entry = _entry(path, ADDED, {}, target.nodes[path])
+			entry = _entry(path, ADDED, {}, target_nodes[path])
 		elif not has_target:
-			entry = _entry(path, DELETED, base.nodes[path], {})
+			entry = _entry(path, DELETED, base_nodes[path], {})
 		else:
-			var before: Dictionary = base.nodes[path]
-			var after: Dictionary = target.nodes[path]
-			var changed_properties := _changed_properties(before.properties, after.properties)
+			var before: Dictionary = base_nodes[path]
+			var after: Dictionary = target_nodes[path]
+			var changed_properties: Array[String] = _changed_properties(before.get("properties", {}), after.get("properties", {}))
 			var type_changed := str(before.type) != str(after.type)
 			var parent_changed := str(before.parent) != str(after.parent)
 			if type_changed:

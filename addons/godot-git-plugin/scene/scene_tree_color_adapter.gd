@@ -42,7 +42,7 @@ func _find_scene_tree() -> Tree:
 	var dock = editor_interface.call("get_scene_tree_dock")
 	if dock == null:
 		return null
-	var trees := dock.find_children("*", "Tree", true, false)
+	var trees: Array[Node] = dock.find_children("*", "Tree", true, false)
 	return trees[0] if not trees.is_empty() else null
 
 func _color_tree_items(item: TreeItem, parent_path: String, by_path: Dictionary) -> void:

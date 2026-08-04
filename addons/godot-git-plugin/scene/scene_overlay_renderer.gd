@@ -71,9 +71,9 @@ func apply_diff(scene_root: Node, entries: Array, before_root: Node = null, afte
 		var color := _status_color(status)
 		if merge_review:
 			if before_node != null:
-				_add_duplicate(before_node, COLOR_DELETED.with_alpha(before_opacity))
+				_add_duplicate(before_node, _with_alpha(COLOR_DELETED, before_opacity))
 			if after_node != null:
-				_add_duplicate(after_node, COLOR_ADDED.with_alpha(after_opacity))
+				_add_duplicate(after_node, _with_alpha(COLOR_ADDED, after_opacity))
 			continue
 		if status == "DELETED" and before_node != null:
 			_add_duplicate(before_node, COLOR_DELETED)
@@ -163,3 +163,6 @@ func _status_color(status: String) -> Color:
 			return COLOR_DELETED
 		_:
 			return COLOR_MODIFIED
+
+func _with_alpha(color: Color, alpha: float) -> Color:
+	return Color(color.r, color.g, color.b, alpha)

@@ -10,11 +10,10 @@ func initialize(path: String) -> Dictionary:
 	if not ClassDB.class_exists("GitPlugin"):
 		return _error("backend_unavailable", "GitPlugin GDExtension is not loaded")
 
-	var singleton = EditorVCSInterface.get_singleton()
-	if singleton != null and singleton.get_class() == "GitPlugin":
-		native = singleton
-	else:
-		native = ClassDB.instantiate("GitPlugin")
+	# GitPlugin is registered as an editor-only GDExtension class. Godot 4.7
+	# does not expose EditorVCSInterface.get_singleton(), so instantiate it
+	# through the class registry instead of relying on the older VCS API.
+	native = ClassDB.instantiate("GitPlugin")
 	if native == null:
 		return _error("backend_unavailable", "Could not instantiate GitPlugin")
 	return _call("collaboration_initialize", [project_path])

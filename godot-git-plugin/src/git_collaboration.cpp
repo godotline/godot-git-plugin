@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 
 #include "godot_cpp/classes/file_access.hpp"
 #include "godot_cpp/variant/utility_functions.hpp"
@@ -87,6 +88,23 @@ String state_name(int state) {
 		default:
 			return "idle";
 	}
+}
+
+struct BlobPathLookup {
+	std::string target_path;
+	git_oid blob_oid = {};
+	bool found = false;
+};
+
+int find_blob_path_callback(const char *root, const git_tree_entry *entry, void *payload) {
+	BlobPathLookup *lookup = static_cast<BlobPathLookup *>(payload);
+	std::string candidate = root ? root : "";
+	candidate += git_tree_entry_name(entry);
+	if (candidate == lookup->target_path && git_tree_entry_type(entry) == GIT_OBJECT_BLOB) {
+		lookup->blob_oid = *git_tree_entry_id(entry);
+		lookup->found = true;
+	}
+	return 0;
 }
 
 bool resolve_tree(GitPlugin *plugin, const String &name, git_tree_ptr &tree, String &error_message) {
@@ -351,11 +369,21 @@ Dictionary GitPlugin::collaboration_get_blob(const String &ref_name, const Strin
 	}
 	CString c_path(path);
 	git_tree_entry_ptr entry;
-	if (git_tree_entry_bypath(Capture(entry), tree.get(), c_path.data) != 0 || !entry || git_tree_entry_type(entry.get()) != GIT_OBJECT_BLOB) {
-		return collaboration_result(false, "missing_blob", "The ref does not contain a file at " + path);
+	const git_oid *blob_id = nullptr;
+	if (git_tree_entry_bypath(Capture(entry), tree.get(), c_path.data) == 0 && entry && git_tree_entry_type(entry.get()) == GIT_OBJECT_BLOB) {
+		blob_id = git_tree_entry_id(entry.get());
+	} else {
+		// Fall back to a tree walk for paths that libgit2's bypath lookup misses.
+		BlobPathLookup lookup;
+		lookup.target_path = c_path.data;
+		git_tree_walk(tree.get(), GIT_TREEWALK_PRE, find_blob_path_callback, &lookup);
+		if (!lookup.found) {
+			return collaboration_result(false, "missing_blob", "The ref does not contain a file at " + path);
+		}
+		blob_id = &lookup.blob_oid;
 	}
 	git_blob_ptr blob;
-	if (git_blob_lookup(Capture(blob), repo.get(), git_tree_entry_id(entry.get())) != 0) {
+	if (git_blob_lookup(Capture(blob), repo.get(), blob_id) != 0) {
 		return collaboration_result(false, "blob_failed", "Could not load " + path);
 	}
 	Dictionary data;
