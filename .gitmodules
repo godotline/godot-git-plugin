@@ -1,7 +1,7 @@
 [submodule "godot-cpp"]
 	path = godot-cpp
 	url = https://github.com/godotengine/godot-cpp
-	branch = 3.x
+	branch = master
 [submodule "thirdparty/git2/libgit2"]
 	path = thirdparty/git2/libgit2
 	url = https://github.com/libgit2/libgit2
