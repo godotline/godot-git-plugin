@@ -95,12 +95,40 @@ func _add_duplicate(source: Node, color: Color) -> void:
 	overlay_root.add_child(duplicate)
 	duplicate.owner = null
 	if duplicate is Node3D and source is Node3D:
-		duplicate.global_transform = source.global_transform
+		if source.is_inside_tree():
+			duplicate.global_transform = source.global_transform
+		else:
+			duplicate.transform = _relative_transform_3d(source)
 	elif duplicate is Node2D and source is Node2D:
-		duplicate.global_transform = source.global_transform
+		if source.is_inside_tree():
+			duplicate.global_transform = source.global_transform
+		else:
+			duplicate.transform = _relative_transform_2d(source)
 	_apply_color(duplicate, color)
 	if duplicate is CanvasItem:
 		duplicate.show_behind_parent = false
+
+func _relative_transform_3d(source: Node3D) -> Transform3D:
+	var chain: Array[Node3D] = []
+	var current: Node = source
+	while current is Node3D:
+		chain.push_front(current as Node3D)
+		current = current.get_parent()
+	var result := Transform3D.IDENTITY
+	for node in chain:
+		result = result * node.transform
+	return result
+
+func _relative_transform_2d(source: Node2D) -> Transform2D:
+	var chain: Array[Node2D] = []
+	var current: Node = source
+	while current is Node2D:
+		chain.push_front(current as Node2D)
+		current = current.get_parent()
+	var result := Transform2D.IDENTITY
+	for node in chain:
+		result = result * node.transform
+	return result
 
 func _strip_behavior(node: Node) -> void:
 	if node.get_script() != null:
